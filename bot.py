@@ -2,7 +2,7 @@
 Многофункциональный телеграм-бот
 """
 import telebot
-from PIL import Image
+from PIL import Image, ImageOps
 import io
 from telebot import types
 
@@ -34,7 +34,8 @@ def get_options_keyboard():
     keyboard = types.InlineKeyboardMarkup()
     pixelate_btn = types.InlineKeyboardButton("Пикселизация", callback_data="pixelate")
     ascii_btn = types.InlineKeyboardButton("ASCII-арт", callback_data="ascii")
-    keyboard.add(pixelate_btn, ascii_btn)
+    invert_btn = types.InlineKeyboardButton('Инверсия цветов', callback_data='invert')
+    keyboard.add(pixelate_btn, ascii_btn, invert_btn)
     return keyboard
 
 
@@ -94,6 +95,23 @@ def get_charset_keyboard():
     default_btn = types.InlineKeyboardButton("Использовать набор по умолчанию", callback_data="default")
     keyboard.add(input_btn, default_btn)
     return keyboard
+
+
+def invert_colors(message):
+    """
+    Инверсия цветов изображения и отправка его обратно пользователю.
+    :param message: Сообщение пользователя с изображением.
+    """
+    photo_id = user_states[message.chat.id]['photo']
+    file_info = bot.get_file(photo_id)
+    downloaded_file = bot.download_file(file_info.file_path)
+    image_stream = io.BytesIO(downloaded_file)
+    image = Image.open(image_stream)
+    invert_image = ImageOps.invert(image)
+    output_stream = io.BytesIO()
+    invert_image.save(output_stream, format='JPEG')
+    output_stream.seek(0)
+    bot.send_photo(message.chat.id, output_stream)
 
 
 def pixels_to_ascii(image, chars: str = ASCII_CHARS):
@@ -169,25 +187,15 @@ def callback_query(call):
     elif call.data == "ascii":
         bot.send_message(call.message.chat.id, 'Укажите набор ASCII-символов.',
                          reply_markup=get_charset_keyboard())
+    elif call.data == 'invert':
+        bot.answer_callback_query(call.id, 'Инверсия Вашего изображения…')
+        invert_colors(call.message)
     elif call.data == "default":
         bot.answer_callback_query(call.id, "Преобразование Вашего изображения в ASCII-арт…")
         ascii_and_send(call.message)
     elif call.data == "input":
         msg = bot.reply_to(call.message, 'Укажите Ваш набор ASCII-символов.')
         bot.register_next_step_handler(msg, user_ascii_and_send)
-
-
-# Лишние функции, неиспользуемые даже в исходном проекте.
-
-# def grayify(image):
-#     return image.convert('L')
-
-
-# def resize_image(image, new_width=100):
-#     width, height = image.size
-#     ratio = height / width
-#     new_height = int(new_width * ratio)
-#     return image.resize((new_width, new_height))
 
 
 bot.polling(none_stop=True)
