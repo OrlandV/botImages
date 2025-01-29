@@ -26,16 +26,17 @@ def send_welcome(message):
     bot.reply_to(message, "Пришлите мне изображение, и я предложу Вам варианты!")
 
 
-def get_options_keyboard():
+def get_keyboard(buttons: list[tuple[str, str]], row_width: int = 3) -> types.InlineKeyboardMarkup:
     """
-    Формирование клавиатуры главных режимов.
+    Формирование клавиатуры.
+    :param buttons: Список кортежей надписи на кнопке и строки ответа кнопки.
+        (Пример: [('Кнопка1', 'Ответ1'), ('Кнопка2', 'Ответ2')])
+    :param row_width: Количество кнопок в строке.
     :return: Клавиатура.
     """
     keyboard = types.InlineKeyboardMarkup()
-    pixelate_btn = types.InlineKeyboardButton("Пикселизация", callback_data="pixelate")
-    ascii_btn = types.InlineKeyboardButton("ASCII-арт", callback_data="ascii")
-    invert_btn = types.InlineKeyboardButton('Инверсия цветов', callback_data='invert')
-    keyboard.add(pixelate_btn, ascii_btn, invert_btn)
+    btn = [types.InlineKeyboardButton(b[0], callback_data=b[1]) for b in buttons]
+    keyboard.add(*btn, row_width=row_width)
     return keyboard
 
 
@@ -45,8 +46,10 @@ def handle_photo(message):
     Обработчик изображений пользователя.
     :param message: Изображение (сообщение) пользователя.
     """
+    btn = [('Пикселизация', 'pixelate'), ('ASCII-арт', 'ascii'),
+           ('Инверсия цветов', 'invert'), ('Отражение', 'reflection')]
     bot.reply_to(message, "У меня есть Ваша фотография! Пожалуйста, выберите, что бы Вы хотели с ней сделать.",
-                 reply_markup=get_options_keyboard())
+                 reply_markup=get_keyboard(btn, 2))
     user_states[message.chat.id] = {'photo': message.photo[-1].file_id}
 
 
@@ -68,33 +71,39 @@ def pixelate_image(image, pixel_size: int):
     return image
 
 
-def pixelate_and_send(message):
+def get_image(message):
     """
-    Пикселизация изображения и отправка его обратно пользователю.
+    Получение изображения.
     :param message: Сообщение пользователя с изображением.
+    :return: Изображение.
     """
     photo_id = user_states[message.chat.id]['photo']
     file_info = bot.get_file(photo_id)
     downloaded_file = bot.download_file(file_info.file_path)
     image_stream = io.BytesIO(downloaded_file)
-    image = Image.open(image_stream)
-    pixelated = pixelate_image(image, 20)
+    return Image.open(image_stream)
+
+
+def send_image(image, message):
+    """
+    Отправка изображения.
+    :param image: Изображение, готовое к отправке.
+    :param message: Сообщение пользователя.
+    """
     output_stream = io.BytesIO()
-    pixelated.save(output_stream, format="JPEG")
+    image.save(output_stream, format="JPEG")
     output_stream.seek(0)
     bot.send_photo(message.chat.id, output_stream)
 
 
-def get_charset_keyboard():
+def pixelate_and_send(message):
     """
-    Формирование клавиатуры наборов символов.
-    :return: Клавиатура.
+    Пикселизация изображения и отправка его обратно пользователю.
+    :param message: Сообщение пользователя с изображением.
     """
-    keyboard = types.InlineKeyboardMarkup()
-    input_btn = types.InlineKeyboardButton("Ввести свой набор", callback_data="input")
-    default_btn = types.InlineKeyboardButton("Использовать набор по умолчанию", callback_data="default")
-    keyboard.add(input_btn, default_btn)
-    return keyboard
+    image = get_image(message)
+    pixelated = pixelate_image(image, 20)
+    send_image(pixelated, message)
 
 
 def invert_colors(message):
@@ -102,16 +111,9 @@ def invert_colors(message):
     Инверсия цветов изображения и отправка его обратно пользователю.
     :param message: Сообщение пользователя с изображением.
     """
-    photo_id = user_states[message.chat.id]['photo']
-    file_info = bot.get_file(photo_id)
-    downloaded_file = bot.download_file(file_info.file_path)
-    image_stream = io.BytesIO(downloaded_file)
-    image = Image.open(image_stream)
+    image = get_image(message)
     invert_image = ImageOps.invert(image)
-    output_stream = io.BytesIO()
-    invert_image.save(output_stream, format='JPEG')
-    output_stream.seek(0)
-    bot.send_photo(message.chat.id, output_stream)
+    send_image(invert_image, message)
 
 
 def pixels_to_ascii(image, chars: str = ASCII_CHARS):
@@ -128,16 +130,16 @@ def pixels_to_ascii(image, chars: str = ASCII_CHARS):
     return characters
 
 
-def image_to_ascii(image_stream, new_width: int = 40, chars: str = ASCII_CHARS):
+def image_to_ascii(image, new_width: int = 40, chars: str = ASCII_CHARS):
     """
     Преобразование изображения в ASCII-арт.
-    :param image_stream: Файл изображения (байт-строка).
+    :param image: Изображение.
     :param new_width: Новая ширина в символах.
     :param chars: Набор ASCII-символов.
     :return: ASCII-арт.
     """
     # Конвертирование в оттенки серого.
-    image = Image.open(image_stream).convert('L')
+    image = image.convert('L')
     # Изменение размера, сохраняя отношение сторон.
     width, height = image.size
     aspect_ratio = height / float(width)
@@ -159,11 +161,8 @@ def ascii_and_send(message, chars: str = ASCII_CHARS):
     :param message: Сообщение пользователя.
     :param chars: Набор ASCII-символов.
     """
-    photo_id = user_states[message.chat.id]['photo']
-    file_info = bot.get_file(photo_id)
-    downloaded_file = bot.download_file(file_info.file_path)
-    image_stream = io.BytesIO(downloaded_file)
-    ascii_art = image_to_ascii(image_stream, chars=chars)
+    image = get_image(message)
+    ascii_art = image_to_ascii(image, chars=chars)
     bot.send_message(message.chat.id, f"```\n{ascii_art}\n```", parse_mode="MarkdownV2")
 
 
@@ -173,6 +172,23 @@ def user_ascii_and_send(message):
     :param message: Сообщение пользователя.
     """
     ascii_and_send(message, message.text + ' ')
+
+
+def reflection(message, direction: str):
+    """
+    Горизонтальное отражение изображения и отправка его обратно пользователю.
+    :param message: Сообщение пользователя с изображением.
+    :param direction: Направление отражения ('horizontal', 'vertical').
+    """
+    image = get_image(message)
+    if direction == 'horizontal':
+        direct = Image.Transpose.FLIP_LEFT_RIGHT
+    elif direction == 'vertical':
+        direct = Image.Transpose.FLIP_TOP_BOTTOM
+    else:
+        raise ValueError('Ошибка в аргументе «direction». Ожидаются значения «horizontal» или «vertical».')
+    reflection_image = image.transpose(direct)
+    send_image(reflection_image, message)
 
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -185,17 +201,28 @@ def callback_query(call):
         bot.answer_callback_query(call.id, "Пикселизация Вашего изображения…")
         pixelate_and_send(call.message)
     elif call.data == "ascii":
+        btn = [('Ввести свой набор', 'input'), ('Использовать набор по умолчанию', 'default')]
         bot.send_message(call.message.chat.id, 'Укажите набор ASCII-символов.',
-                         reply_markup=get_charset_keyboard())
+                         reply_markup=get_keyboard(btn))
     elif call.data == 'invert':
         bot.answer_callback_query(call.id, 'Инверсия Вашего изображения…')
         invert_colors(call.message)
+    elif call.data == 'reflection':
+        btn = [('Горизонтальное', 'horizontal'), ('Вертикальное', 'vertical')]
+        bot.send_message(call.message.chat.id, 'Укажите направление отражения.',
+                         reply_markup=get_keyboard(btn))
     elif call.data == "default":
         bot.answer_callback_query(call.id, "Преобразование Вашего изображения в ASCII-арт…")
         ascii_and_send(call.message)
     elif call.data == "input":
         msg = bot.reply_to(call.message, 'Укажите Ваш набор ASCII-символов.')
         bot.register_next_step_handler(msg, user_ascii_and_send)
+    elif call.data == 'horizontal':
+        bot.answer_callback_query(call.id, 'Горизонтальное отражение…')
+        reflection(call.message, 'horizontal')
+    elif call.data == 'vertical':
+        bot.answer_callback_query(call.id, 'Вертикальное отражение…')
+        reflection(call.message, 'vertical')
 
 
 bot.polling(none_stop=True)
